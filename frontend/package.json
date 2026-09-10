@@ -1,0 +1,1 @@
+{"name":"shop-frontend","private":true,"version":"1.0.0","type":"module","scripts":{"dev":"vite"},"dependencies":{"react":"latest","react-dom":"latest"},"devDependencies":{"@vitejs/plugin-react":"^4.3.4","vite":"^6.4.1"}}

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delacruz Shop</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        h1 {
+            color: #333;
+        }
+
+        .product {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 8px;
+        }
+
+        button {
+            padding: 8px 15px;
+            cursor: pointer;
+        }
+
+        input {
+            width: 60px;
+            padding: 6px;
+        }
+
+        #message {
+            margin-top: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Delacruz Shop</h1>
+
+<div id="products">Loading products...</div>
+
+<div id="message"></div>
+
+<script>
+async function loadProducts() {
+    const response = await fetch("/api/products");
+    const products = await response.json();
+
+    const container = document.getElementById("products");
+    container.innerHTML = "";
+
+    products.forEach(product => {
+        container.innerHTML += `
+            <div class="product">
+                <h3>${product.name}</h3>
+                <p>Product ID: ${product.productId}</p>
+                <p>Stock: ${product.stock}</p>
+
+                <input
+                    id="qty-${product.productId}"
+                    type="number"
+                    min="1"
+                    value="1"
+                >
+
+                <button onclick="orderProduct('${product.productId}')">
+                    Order
+                </button>
+            </div>
+        `;
+    });
+}
+
+async function orderProduct(productId) {
+    const quantity =
+        Number(document.getElementById("qty-" + productId).value);
+
+    const response = await fetch("/api/orders", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            productId: productId,
+            quantity: quantity
+        })
+    });
+
+    const result = await response.json();
+
+    document.getElementById("message").textContent =
+        result.reason;
+
+    loadProducts();
+}
+
+loadProducts();
+</script>
+
+</body>
+</html>
