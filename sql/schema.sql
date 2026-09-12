@@ -1,12 +1,3 @@
--- ============================================================
--- Delacruz Shop — Supabase schema + seed data
--- Run this in the Supabase project's SQL Editor
--- (Project → SQL Editor → New query → paste → Run)
---
--- This is the exact script that was run against the project's
--- Supabase Postgres instance for this assignment.
--- ============================================================
-
 create table inventory (
     product_id varchar(20) primary key,
     name varchar(255) not null,
