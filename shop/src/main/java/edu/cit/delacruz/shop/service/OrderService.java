@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import edu.cit.delacruz.inventory.model.InventoryItem;
+import edu.cit.delacruz.inventory.service.InsufficientStockException;
 import edu.cit.delacruz.inventory.service.InventoryService;
 import edu.cit.delacruz.shop.model.Order;
 import edu.cit.delacruz.shop.repository.OrderRepository;
@@ -28,8 +29,6 @@ public class OrderService {
 
     @Transactional
     public Map<String, Object> placeOrder(String productId, int quantity) {
-
-        Map<String, Object> response = new LinkedHashMap<>();
 
         if (productId == null || productId.isBlank()) {
             return saveRejectedOrder(
@@ -60,33 +59,31 @@ public class OrderService {
             );
         }
 
-        if (quantity > item.getStock()) {
-            return saveRejectedOrder(
+        // Order does not pre-check stock itself — it delegates entirely to
+        // InventoryService.reserve(), which is where the rejection rule is
+        // actually enforced (inside the Inventory module boundary).
+        try {
+            InventoryItem updatedItem = inventoryService.reserve(productId, quantity);
+
+            Order order = new Order(
                     productId,
                     quantity,
-                    "Insufficient stock.",
-                    item
+                    "CONFIRMED",
+                    "Order confirmed.",
+                    LocalDateTime.now()
             );
+
+            orderRepository.save(order);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "CONFIRMED");
+            response.put("reason", "Order confirmed.");
+            response.put("inventory", updatedItem);
+
+            return response;
+        } catch (InsufficientStockException e) {
+            return saveRejectedOrder(productId, quantity, e.getMessage(), item);
         }
-
-        InventoryItem updatedItem =
-                inventoryService.reserve(productId, quantity);
-
-        Order order = new Order(
-                productId,
-                quantity,
-                "CONFIRMED",
-                "Order confirmed.",
-                LocalDateTime.now()
-        );
-
-        orderRepository.save(order);
-
-        response.put("status", "CONFIRMED");
-        response.put("reason", "Order confirmed.");
-        response.put("inventory", updatedItem);
-
-        return response;
     }
 
     private Map<String, Object> saveRejectedOrder(

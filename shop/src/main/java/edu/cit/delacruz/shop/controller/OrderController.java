@@ -1,7 +1,7 @@
 package edu.cit.delacruz.shop.controller;
 
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -11,8 +11,6 @@ import edu.cit.delacruz.shop.service.OrderService;
 
 @RestController
 @RequestMapping("/api/orders")
-@CrossOrigin(origins = "http://localhost:5173")
-
 public class OrderController {
 
     private final OrderService orderService;
@@ -22,7 +20,7 @@ public class OrderController {
     }
 
     @PostMapping
-    public ResponseEntity<?> placeOrder(@RequestBody OrderRequest request) {
+    public ResponseEntity<?> placeOrder(@Valid @RequestBody OrderRequest request) {
         return ResponseEntity.ok(
                 orderService.placeOrder(
                         request.getProductId(),
