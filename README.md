@@ -42,14 +42,31 @@ delacruz-shop/
    | P100       | Wireless Mouse      | 25    |
    | P200       | Mechanical Keyboard | 10    |
    | P300       | USB-C Hub           | 0     |
-3. Go to **Project Settings → Database → Connection string** and copy the
-   **JDBC** connection string (Session pooler or Direct connection both
-   work). It looks like:
+
+   For this project, that was run against:
    ```
-   jdbc:postgresql://<host>:5432/postgres
+   host     = db.ncmzvychjudjqznevynk.supabase.co
+   port     = 5432
+   database = postgres
+   user     = postgres
    ```
-4. You now have everything needed for the three environment variables
-   below.
+
+3. **Connection string, and a gotcha to know about:** Supabase's
+   *direct* connection host (`db.<project-ref>.supabase.co:5432`)
+   resolves to an **IPv6-only** address unless your project is on a paid
+   plan with the IPv4 add-on. Most home/school networks and laptops
+   don't have outbound IPv6, so a plain JDBC connection to that host
+   will often just hang or fail with "could not translate host name" /
+   "Network is unreachable" — this is a Supabase networking limitation,
+   not a bug in this app. If you hit that, go to your project dashboard
+   → **Connect** → **Session pooler** and use that host/port instead
+   (still port `5432`, dual-stack IPv4+IPv6, same SQL semantics as a
+   direct connection — safe for a Spring Boot app holding a normal
+   connection pool). The **Transaction pooler** (port `6543`) is meant
+   for serverless/short-lived connections and is not a good fit for
+   Hibernate/JPA here.
+4. Either way, you now have a JDBC URL, username, and password for the
+   three environment variables below.
 
 ## 2. Backend — environment variables
 
@@ -57,18 +74,18 @@ Credentials are **never committed**. Set these as real environment
 variables (shell export, IDE run-config, or a local `.env` you keep out
 of Git) before starting the app:
 
-| Variable                | Example                                              |
-|--------------------------|-------------------------------------------------------|
-| `SUPABASE_DB_URL`        | `jdbc:postgresql://db.xxxx.supabase.co:5432/postgres` |
-| `SUPABASE_DB_USERNAME`   | `postgres`                                            |
-| `SUPABASE_DB_PASSWORD`   | `your-db-password`                                    |
-| `CORS_ALLOWED_ORIGIN`    | `http://localhost:5173` (default if unset)            |
+| Variable                | Example                                                               |
+|--------------------------|------------------------------------------------------------------------|
+| `SUPABASE_DB_URL`        | `jdbc:postgresql://db.ncmzvychjudjqznevynk.supabase.co:5432/postgres` |
+| `SUPABASE_DB_USERNAME`   | `postgres`                                                            |
+| `SUPABASE_DB_PASSWORD`   | `your-db-password` (never commit this — see the pooler note above if the direct host doesn't connect) |
+| `CORS_ALLOWED_ORIGIN`    | `http://localhost:5173` (default if unset)                            |
 
 Run it:
 
 ```bash
 cd shop
-export SUPABASE_DB_URL="jdbc:postgresql://<host>:5432/postgres"
+export SUPABASE_DB_URL="jdbc:postgresql://db.ncmzvychjudjqznevynk.supabase.co:5432/postgres"
 export SUPABASE_DB_USERNAME="postgres"
 export SUPABASE_DB_PASSWORD="<your-password>"
 ./mvnw spring-boot:run
