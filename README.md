@@ -1,172 +1,53 @@
-# Delacruz Shop
 
-A single Spring Boot application with two in-process modules — **Order**
-(`edu.cit.delacruz.shop`) and **Inventory** (`edu.cit.delacruz.inventory`) —
-sharing one Supabase (Postgres) database, plus a React (Vite) frontend that
-talks to it over REST.
-
-```
-delacruz-shop/
-├── shop/            # Spring Boot app (Order + Inventory modules)
-│   └── src/main/java/edu/cit/delacruz/
-│       ├── ShopApplication.java        # @SpringBootApplication, scans both modules
-│       ├── config/CorsConfig.java
-│       ├── shop/           # Order module
-│       │   ├── controller/ (OrderController, OrderRequest, ProductController)
-│       │   ├── service/OrderService.java
-│       │   ├── model/Order.java
-│       │   └── repository/OrderRepository.java
-│       └── inventory/      # Inventory module
-│           ├── controller/InventoryController.java
-│           ├── service/InventoryService.java          (public interface)
-│           ├── service/InventoryServiceImpl.java       (package-private!)
-│           ├── service/InsufficientStockException.java
-│           ├── model/InventoryItem.java
-│           └── repository/InventoryRepository.java
-├── frontend/        # React (Vite) app
-├── sql/schema.sql   # Table creation + seed data for Supabase
-└── README.md
-```
 
 ## 1. Supabase setup
 
-1. Go to [supabase.com](https://supabase.com) and create a free account /
-   new project (pick a region close to you and a database password —
-   save that password, you'll need it below).
-2. Once the project is provisioned, open **SQL Editor → New query**, paste
-   the contents of [`sql/schema.sql`](sql/schema.sql), and click **Run**.
-   This creates the `inventory` and `orders` tables and seeds `inventory`
-   with:
-   | product_id | name                | stock |
-   |------------|---------------------|-------|
-   | P100       | Wireless Mouse      | 25    |
-   | P200       | Mechanical Keyboard | 10    |
-   | P300       | USB-C Hub           | 0     |
+1. Supabase Setup
+Create a free project at Supabase.
+Open SQL Editor → New Query.
+Run sql/schema.sql to create and seed the inventory and orders tables.
+Get your database connection details from Connect → Session pooler.
+Set these environment variables before running the backend:
 
    For this project, that was run against:
    ```
-   host     = db.ncmzvychjudjqznevynk.supabase.co
-   port     = 5432
-   database = postgres
-   user     = postgres
+   host=aws-0-ap-northeast-2.pooler.supabase.com
+   port=5432
+   database=postgres
+   user=postgres.ncmzvychjudjqznevynk
    ```
 
-3. **Connection string, and a gotcha to know about:** Supabase's
-   *direct* connection host (`db.<project-ref>.supabase.co:5432`)
-   resolves to an **IPv6-only** address unless your project is on a paid
-   plan with the IPv4 add-on. Most home/school networks and laptops
-   don't have outbound IPv6, so a plain JDBC connection to that host
-   will often just hang or fail with "could not translate host name" /
-   "Network is unreachable" — this is a Supabase networking limitation,
-   not a bug in this app. If you hit that, go to your project dashboard
-   → **Connect** → **Session pooler** and use that host/port instead
-   (still port `5432`, dual-stack IPv4+IPv6, same SQL semantics as a
-   direct connection — safe for a Spring Boot app holding a normal
-   connection pool). The **Transaction pooler** (port `6543`) is meant
-   for serverless/short-lived connections and is not a good fit for
-   Hibernate/JPA here.
-4. Either way, you now have a JDBC URL, username, and password for the
-   three environment variables below.
 
-## 2. Backend — environment variables
-
-Credentials are **never committed**. Set these as real environment
-variables (shell export, IDE run-config, or a local `.env` you keep out
-of Git) before starting the app:
-
-| Variable                | Example                                                               |
-|--------------------------|------------------------------------------------------------------------|
-| `SUPABASE_DB_URL`        | `jdbc:postgresql://db.ncmzvychjudjqznevynk.supabase.co:5432/postgres` |
-| `SUPABASE_DB_USERNAME`   | `postgres`                                                            |
-| `SUPABASE_DB_PASSWORD`   | `your-db-password` (never commit this — see the pooler note above if the direct host doesn't connect) |
-| `CORS_ALLOWED_ORIGIN`    | `http://localhost:5173` (default if unset)                            |
-
-Run it:
-
-```bash
+## 2. Run the Application
+Backend
 cd shop
-export SUPABASE_DB_URL="jdbc:postgresql://db.ncmzvychjudjqznevynk.supabase.co:5432/postgres"
-export SUPABASE_DB_USERNAME="postgres"
-export SUPABASE_DB_PASSWORD="<your-password>"
 ./mvnw spring-boot:run
-```
 
-The API comes up on `http://localhost:8080`.
+Backend runs on:
 
-## 3. Frontend
-
-```bash
+http://localhost:8080
+Frontend
 cd frontend
-cp .env.example .env       # adjust VITE_API_BASE_URL if needed
 npm install
 npm run dev
-```
 
-Open `http://localhost:5173`. Pick a product, enter a quantity, and
-submit.
+Open:
 
-## 4. API
+http://localhost:5173
 
-`POST /api/orders`
+Select a product, enter a quantity, and click Submit Order.
 
-Request:
-```json
-{ "productId": "P100", "quantity": 2 }
-```
+## 3. Network Tab Evidence
+# Confirmed Order
 
-Response (confirmed):
-```json
-{ "status": "CONFIRMED", "reason": "Order confirmed.", "inventory": { "productId": "P100", "name": "Wireless Mouse", "stock": 23 } }
-```
+<img width="1915" height="982" alt="image" src="https://github.com/user-attachments/assets/e5706b5e-1d9b-4546-a0d5-0baf70c8e5d1" />
 
-Response (rejected — e.g. ordering more than is in stock):
-```json
-{ "status": "REJECTED", "reason": "Insufficient stock for P300: requested 1 but only 0 available.", "inventory": { "productId": "P300", "name": "USB-C Hub", "stock": 0 } }
-```
+# Rejected Order
 
-## 5. Testing both paths end-to-end (Network tab evidence)
+<img width="1919" height="947" alt="image" src="https://github.com/user-attachments/assets/01f85cc3-6d91-483e-881f-7537e0f2addd" />
 
-> **Note:** this repo ships the code and scripts to reproduce this
-> yourself against **your own** Supabase project — screenshots of a
-> live run against your credentials need to be captured by you and
-> added to this section (e.g. `docs/network-confirmed.png` and
-> `docs/network-rejected.png`) before submitting.
 
-To reproduce:
-
-1. Start the backend and frontend as above, open the frontend in
-   Chrome/Edge, and open DevTools → **Network** tab.
-2. **Confirmed path:** select "Wireless Mouse" (25 in stock), quantity
-   `2`, submit. In the Network tab, click the `orders` request → confirm
-   the request payload is `{"productId":"P100","quantity":2}` and the
-   response body shows `"status":"CONFIRMED"` with `stock` decremented
-   to `23`. Screenshot both the request and response panels.
-3. **Rejected path:** select "USB-C Hub" (0 in stock), quantity `1`,
-   submit. Confirm the response body shows `"status":"REJECTED"` and a
-   reason mentioning insufficient stock, with `stock` unchanged at `0`.
-   Screenshot both panels.
-4. You can also reproduce both paths directly with `curl`, which is
-   useful for a terminal-based screenshot instead of/in addition to the
-   browser Network tab:
-   ```bash
-   curl -i -X POST http://localhost:8080/api/orders \
-     -H "Content-Type: application/json" \
-     -d '{"productId":"P100","quantity":2}'
-
-   curl -i -X POST http://localhost:8080/api/orders \
-     -H "Content-Type: application/json" \
-     -d '{"productId":"P300","quantity":1}'
-   ```
-5. Query Supabase's **Table Editor → orders** afterward to confirm both
-   attempts were persisted with the correct `status` and `reason`.
-
-**Confirmed order evidence:**  
-_(insert screenshot here)_
-
-**Rejected order evidence:**  
-_(insert screenshot here)_
-
-## 6. Reflection
+## 4. Reflection
 
 **1. In-process vs. separate microservices over a network — what do you
 get for free, and what would you need to add back if split?**
