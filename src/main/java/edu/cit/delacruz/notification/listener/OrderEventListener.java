@@ -3,18 +3,18 @@ package edu.cit.delacruz.notification.listener;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
-import edu.cit.delacruz.inventory.event.LowStockEvent;
 import edu.cit.delacruz.notification.service.NotificationService;
 import edu.cit.delacruz.shop.event.OrderCancelledEvent;
 import edu.cit.delacruz.shop.event.OrderPlacedEvent;
 import edu.cit.delacruz.shop.event.OrderRejectedEvent;
 
 /**
- * The only thing in the Notification module that touches the other two
- * modules — and only their event classes (edu.cit.delacruz.shop.event,
- * edu.cit.delacruz.inventory.event), never OrderService or
- * InventoryService directly. Order and Inventory, in turn, never import
- * anything from edu.cit.delacruz.notification.
+ * The only thing in the Notification module that touches another module —
+ * and only Order's event classes (edu.cit.delacruz.shop.event), never
+ * OrderService directly. Order, in turn, never imports anything from
+ * edu.cit.delacruz.notification. LowStockEvent moved to the supplier
+ * module's own listener (AutoReorderListener), which places a real
+ * purchase order instead of logging "reorder needed."
  * <p>
  * Deliberately NOT @Async. Plain @EventListener methods run synchronously,
  * on the same thread, inside whatever transaction the publisher (e.g.
@@ -60,15 +60,6 @@ public class OrderEventListener {
         notificationService.record(
                 "ORDER_CANCELLED",
                 "Order O" + event.getOrderId() + " cancelled; stock restored."
-        );
-    }
-
-    @EventListener
-    public void onLowStock(LowStockEvent event) {
-        notificationService.record(
-                "LOW_STOCK",
-                "Reorder needed: " + event.getName() + " (" + event.getProductId() + ") has only "
-                        + event.getRemainingStock() + " left (threshold " + event.getThreshold() + ")."
         );
     }
 }
