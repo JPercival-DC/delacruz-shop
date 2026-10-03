@@ -4,6 +4,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import edu.cit.delacruz.notification.service.NotificationService;
+import edu.cit.delacruz.shop.event.OrderBackorderedEvent;
 import edu.cit.delacruz.shop.event.OrderCancelledEvent;
 import edu.cit.delacruz.shop.event.OrderPlacedEvent;
 import edu.cit.delacruz.shop.event.OrderRejectedEvent;
@@ -60,6 +61,14 @@ public class OrderEventListener {
         notificationService.record(
                 "ORDER_CANCELLED",
                 "Order O" + event.getOrderId() + " cancelled; stock restored."
+        );
+    }
+
+    @EventListener
+    public void onOrderBackordered(OrderBackorderedEvent event) {
+        notificationService.record(
+                "ORDER_BACKORDERED",
+                "Order O" + event.getOrderId() + " backordered; waiting on supplier delivery."
         );
     }
 }

@@ -24,4 +24,12 @@ public interface SupplierGateway {
      *                                   is not positive
      */
     Optional<ReorderResult> requestReorder(String productId, int unitsNeeded);
+
+    /**
+     * The LegacySupply SupplierSku {@code productId} restocks from, if one
+     * is configured. Read-only - doesn't touch LegacySupply or the outbox.
+     * Exists so other modules (e.g. channel, publishing Tiangge listings)
+     * can name the supplier mapping without duplicating it themselves.
+     */
+    Optional<String> supplierSkuFor(String productId);
 }

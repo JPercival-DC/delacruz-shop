@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import edu.cit.delacruz.inventory.model.InventoryItem;
 import edu.cit.delacruz.inventory.service.InventoryService;
 import edu.cit.delacruz.inventory.service.ReservationLine;
+import edu.cit.delacruz.shop.event.OrderBackorderedEvent;
 import edu.cit.delacruz.shop.event.OrderCancelledEvent;
 import edu.cit.delacruz.shop.event.OrderPlacedEvent;
 import edu.cit.delacruz.shop.event.OrderRejectedEvent;
@@ -26,9 +27,10 @@ import edu.cit.delacruz.shop.repository.OrderRepository;
 @Service
 public class OrderService {
 
-    private static final String STATUS_CONFIRMED = "CONFIRMED";
-    private static final String STATUS_REJECTED = "REJECTED";
-    private static final String STATUS_CANCELLED = "CANCELLED";
+    public static final String STATUS_CONFIRMED = "CONFIRMED";
+    public static final String STATUS_REJECTED = "REJECTED";
+    public static final String STATUS_CANCELLED = "CANCELLED";
+    public static final String STATUS_BACKORDERED = "BACKORDERED";
 
     private static final String OUTCOME_OK = "OK";
     private static final String OUTCOME_RESERVED = "RESERVED";
@@ -36,6 +38,7 @@ public class OrderService {
     private static final String OUTCOME_INSUFFICIENT_STOCK = "INSUFFICIENT_STOCK";
     private static final String OUTCOME_PRODUCT_NOT_FOUND = "PRODUCT_NOT_FOUND";
     private static final String OUTCOME_INVALID_QUANTITY = "INVALID_QUANTITY";
+    private static final String OUTCOME_BACKORDERED = "BACKORDERED";
 
     private final InventoryService inventoryService;
     private final OrderRepository orderRepository;
@@ -155,6 +158,93 @@ public class OrderService {
         return buildResponse(order, "Order cancelled; reserved quantities returned to stock.", inventorySnapshot);
     }
 
+    /**
+     * Creates an order that reserves nothing yet - for a caller (the
+     * channel module, for Tiangge's BACKORDERED decision) that already
+     * knows the supplier has stock coming but doesn't have it on hand now.
+     * No stock-validation pass runs here; the caller decided this is a
+     * backorder already knowing current stock is insufficient.
+     */
+    @Transactional
+    public Map<String, Object> placeBackorder(List<OrderLine> lines) {
+        List<String> outcomes = lines.stream().map(line -> OUTCOME_BACKORDERED).toList();
+        return persistOrder(lines, outcomes, STATUS_BACKORDERED, "Backordered; stock is on the way from the supplier.");
+    }
+
+    /**
+     * Reserves a backordered order's stock now that it's believed to be
+     * available, and confirms it. Lets InsufficientStockException escape
+     * uncaught if stock turns out not to be there after all (e.g. another
+     * backorder claimed it first) - the caller decides what to do next
+     * (typically {@link #cancelBackorder}), the same way placeOrder leaves
+     * a genuine race to its own caller rather than guessing on its behalf.
+     *
+     * @throws IllegalStateException if the order is not currently BACKORDERED
+     */
+    @Transactional
+    public Map<String, Object> fulfillBackorder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (!STATUS_BACKORDERED.equals(order.getStatus())) {
+            throw new IllegalStateException(
+                    "Order " + orderId + " is not backordered (status " + order.getStatus() + ").");
+        }
+
+        List<ReservationLine> reservationLines = order.getItems().stream()
+                .map(item -> new ReservationLine(item.getProductId(), item.getQuantity()))
+                .toList();
+        inventoryService.reserveAll(reservationLines);
+
+        for (OrderItem item : order.getItems()) {
+            item.setOutcome(OUTCOME_RESERVED);
+        }
+        order.setStatus(STATUS_CONFIRMED);
+        orderRepository.save(order);
+
+        eventPublisher.publishEvent(new OrderPlacedEvent(order.getOrderId()));
+
+        List<InventoryItem> inventorySnapshot = order.getItems().stream()
+                .map(item -> inventoryService.getItem(item.getProductId()))
+                .filter(item -> item != null)
+                .toList();
+
+        return buildResponse(order, "Backorder fulfilled; stock reserved.", inventorySnapshot);
+    }
+
+    /**
+     * Gives up on a backordered order. Unlike {@link #cancelOrder}, this
+     * never calls {@code restock()} - nothing was ever reserved for a
+     * backorder, so there is nothing to give back.
+     *
+     * @throws IllegalStateException if the order is not currently BACKORDERED
+     */
+    @Transactional
+    public Map<String, Object> cancelBackorder(Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException(orderId));
+
+        if (!STATUS_BACKORDERED.equals(order.getStatus())) {
+            throw new IllegalStateException(
+                    "Order " + orderId + " is not backordered (status " + order.getStatus() + ").");
+        }
+
+        for (OrderItem item : order.getItems()) {
+            item.setOutcome(STATUS_CANCELLED);
+        }
+        order.setStatus(STATUS_CANCELLED);
+        orderRepository.save(order);
+
+        // Reusing OrderRejectedEvent rather than OrderCancelledEvent: the
+        // latter's documented contract is "stock restored", which isn't
+        // true here. "This order did not go through, here's why" is
+        // exactly what OrderRejectedEvent already means.
+        eventPublisher.publishEvent(
+                new OrderRejectedEvent(order.getOrderId(), "Backorder could not be filled by the supplier."));
+
+        return buildResponse(order, "Backorder cancelled; supplier could not fill it.", List.of());
+    }
+
     @Transactional(readOnly = true)
     public List<Order> getAllOrders() {
         return orderRepository.findAll(Sort.by(Sort.Direction.DESC, "orderId"));
@@ -174,6 +264,8 @@ public class OrderService {
 
         if (STATUS_CONFIRMED.equals(status)) {
             eventPublisher.publishEvent(new OrderPlacedEvent(order.getOrderId()));
+        } else if (STATUS_BACKORDERED.equals(status)) {
+            eventPublisher.publishEvent(new OrderBackorderedEvent(order.getOrderId()));
         } else {
             eventPublisher.publishEvent(new OrderRejectedEvent(order.getOrderId(), reason));
         }

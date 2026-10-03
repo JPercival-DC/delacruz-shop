@@ -44,3 +44,25 @@ create unique index supplier_orders_one_open_per_product
     on supplier_orders (product_id)
     where status not in ('DELIVERED', 'FAILED');
 
+-- Lab 4: where TiangeFeedPoller remembers how far it's read the order
+-- feed. Always exactly one row (id=1) - a restart resumes from here
+-- instead of re-reading the feed from the start.
+create table channel_feed_cursor (
+    id integer primary key,
+    next_cursor bigint not null
+);
+
+-- Lab 4: maps one Tiangge order to the order it became in our system.
+-- The unique constraint on tiangge_order_id is what makes "exactly one
+-- order per Tiangge order" hold even across a redelivered feed event -
+-- seeing the same Tiangge order again means re-sending the same decision
+-- (safe, per the manual) instead of creating a second order.
+create table channel_orders (
+    id bigserial primary key,
+    tiangge_order_id varchar(40) not null unique,
+    shop_order_id bigint not null,
+    status varchar(20) not null,
+    created_at timestamp not null default current_timestamp,
+    updated_at timestamp not null default current_timestamp
+);
+

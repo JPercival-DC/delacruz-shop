@@ -13,6 +13,8 @@ import java.util.function.Function;
 
 import org.springframework.stereotype.Component;
 
+import edu.cit.delacruz.AppInstance;
+
 /**
  * Owns everything LegacySupply-specific that isn't the wire format: the
  * session lifecycle, and the timeout/retry rules Part D asks for. Nothing
@@ -31,13 +33,15 @@ class LegacySupplyClient {
     private static final long[] BACKOFF_MS = {300, 900};
 
     private final SupplierProperties properties;
+    private final AppInstance appInstance;
     private final HttpClient http;
     private final Object sessionLock = new Object();
     private volatile String sessionToken;
     private volatile Instant sessionIssuedAt;
 
-    LegacySupplyClient(SupplierProperties properties) {
+    LegacySupplyClient(SupplierProperties properties, AppInstance appInstance) {
         this.properties = properties;
+        this.appInstance = appInstance;
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(properties.timeoutMs()))
                 .build();
@@ -50,6 +54,7 @@ class LegacySupplyClient {
                     .header("Content-Type", "application/xml")
                     .header("X-LS-Session", sessionToken())
                     .header("X-Request-Id", requestId)
+                    .header("X-Client-Instance", appInstance.id().toString())
                     .POST(BodyPublishers.ofString(LegacyXml.purchaseOrderRequest(sku, qty, buyerRef)))
                     .build();
             return send(request, LegacyXml::parseOrderAck);
@@ -62,6 +67,7 @@ class LegacySupplyClient {
                             properties.baseUri().resolve("purchase-orders/" + poNumber))
                     .timeout(Duration.ofMillis(properties.timeoutMs()))
                     .header("X-LS-Session", sessionToken())
+                    .header("X-Client-Instance", appInstance.id().toString())
                     .GET()
                     .build();
             return send(request, LegacyXml::parseOrderStatus);
@@ -125,6 +131,7 @@ class LegacySupplyClient {
             HttpRequest request = HttpRequest.newBuilder(properties.baseUri().resolve("auth/token"))
                     .timeout(Duration.ofMillis(properties.timeoutMs()))
                     .header("Content-Type", "application/xml")
+                    .header("X-Client-Instance", appInstance.id().toString())
                     .POST(BodyPublishers.ofString(
                             LegacyXml.authRequest(properties.clientId(), properties.apiKey())))
                     .build();

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import edu.cit.delacruz.inventory.event.LowStockEvent;
+import edu.cit.delacruz.inventory.event.StockChangedEvent;
 import edu.cit.delacruz.inventory.model.InventoryItem;
 import edu.cit.delacruz.inventory.repository.InventoryRepository;
 
@@ -69,6 +70,8 @@ class InventoryServiceImpl implements InventoryService {
         item.setStock(item.getStock() - quantity);
         InventoryItem saved = inventoryRepository.save(item);
 
+        eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
+
         // Low-stock rule: fires on every successful reserve(), whether it
         // was called directly or as part of reserveAll() below, since
         // reserveAll() just calls this method in a loop.
@@ -112,7 +115,10 @@ class InventoryServiceImpl implements InventoryService {
                 .orElseThrow(() -> new IllegalArgumentException("Product not found: " + productId));
 
         item.setStock(item.getStock() + quantity);
+        InventoryItem saved = inventoryRepository.save(item);
 
-        return inventoryRepository.save(item);
+        eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
+
+        return saved;
     }
 }

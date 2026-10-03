@@ -79,6 +79,15 @@ class SupplierGatewayImpl implements SupplierGateway {
         return Optional.of(new ReorderResult(order.getId(), productId, units, order.getStatus()));
     }
 
+    @Override
+    public Optional<String> supplierSkuFor(String productId) {
+        try {
+            return Optional.of(properties.lookup(productId).sku());
+        } catch (IllegalArgumentException notMapped) {
+            return Optional.empty();
+        }
+    }
+
     /**
      * Rounds units up to whole cases, then caps at LegacySupply's own Qty
      * ceiling.

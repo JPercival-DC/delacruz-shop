@@ -357,6 +357,11 @@ button.secondary:hover:not(:disabled) {
   color: var(--danger-ink);
 }
 
+.order-status.backordered {
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+}
+
 .order-reason {
   font-size: 0.82rem;
   color: var(--ink-muted);
