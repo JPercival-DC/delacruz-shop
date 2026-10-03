@@ -1,11 +1,12 @@
 package edu.cit.delacruz.channel;
 
 import java.util.Comparator;
-
+import java.util.Optional   ;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.event.TransactionalEventListener;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.event.TransactionPhase;
 
 import edu.cit.delacruz.inventory.service.InsufficientStockException;
@@ -52,6 +53,7 @@ class BackorderResolutionListener {
                 .forEach(this::resolve);
     }
 
+    
     private void resolve(Order order) {
         String decision;
         try {
@@ -62,20 +64,20 @@ class BackorderResolutionListener {
             decision = "CANCELLED";
         }
 
-        channelOrderRepository.findByShopOrderId(order.getOrderId()).ifPresentOrElse(
-                channelOrder -> {
-                    channelOrder.setStatus(
-                            "ACCEPTED".equals(decision) ? OrderService.STATUS_CONFIRMED : OrderService.STATUS_CANCELLED);
-                    channelOrderRepository.save(channelOrder);
-                    try {
-                        client.resolve(channelOrder.getTiangeOrderId(), decision);
-                    } catch (RuntimeException e) {
-                        log.warn("Resolving backorder for Tiangge order {} failed: {}",
-                                channelOrder.getTiangeOrderId(), e.getMessage());
-                    }
-                },
-                () -> log.warn("Order {} resolved as {} but has no Tiangge mapping - was it ever a Tiangge order?",
-                        order.getOrderId(), decision)
-        );
+        Optional<ChannelOrder> channelOrder = channelOrderRepository.findByShopOrderId(order.getOrderId());
+        if (channelOrder.isEmpty()) {
+            log.warn("Order {} resolved as {} but has no Tiangge mapping - was it ever a Tiangge order?",
+                    order.getOrderId(), decision);
+            return;
+        }
+
+        ChannelOrder co = channelOrder.get();
+        co.setStatus("ACCEPTED".equals(decision) ? OrderService.STATUS_CONFIRMED : OrderService.STATUS_CANCELLED);
+        channelOrderRepository.save(co);
+        try {
+            client.resolve(co.getTiangeOrderId(), decision);
+        } catch (RuntimeException e) {
+            log.warn("Resolving backorder for Tiangge order {} failed: {}", co.getTiangeOrderId(), e.getMessage());
+        }
     }
 }

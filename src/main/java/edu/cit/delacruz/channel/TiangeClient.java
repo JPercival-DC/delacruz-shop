@@ -12,7 +12,7 @@ import java.util.concurrent.Callable;
 
 import org.springframework.stereotype.Component;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 
 import edu.cit.delacruz.AppInstance;
 import edu.cit.delacruz.channel.TiangeJson.CancellationConfirmRequest;
