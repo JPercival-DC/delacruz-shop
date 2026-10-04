@@ -48,10 +48,12 @@ class SupplierGatewayImpl implements SupplierGateway {
 
     private final SupplierOrderRepository repository;
     private final SupplierProperties properties;
+    private final SupplierOrderSender sender;
 
-    SupplierGatewayImpl(SupplierOrderRepository repository, SupplierProperties properties) {
+    SupplierGatewayImpl(SupplierOrderRepository repository, SupplierProperties properties, SupplierOrderSender sender) {
         this.repository = repository;
         this.properties = properties;
+        this.sender = sender;
     }
 
     @Override
@@ -75,6 +77,28 @@ class SupplierGatewayImpl implements SupplierGateway {
         SupplierOrder order = repository.save(
                 new SupplierOrder(productId, UUID.randomUUID().toString(), cases, units));
         order.setBuyerRef("RO-" + order.getId()); // managed entity - dirty-checked and flushed at commit
+
+        // Try to place it with LegacySupply right now instead of waiting up
+        // to send-interval-ms (15s) for the next scheduled sweep. This is
+        // specifically what a fresh Tiangge backorder needs: the caller
+        // (AutoReorderListener, or the channel module backordering a short
+        // Tiangge order) gets back an order that's either already PLACED,
+        // or still safely PENDING for the scheduled job to retry - never a
+        // decision reported as "a PO is open" before LegacySupply has
+        // actually been asked. A product that already has an open PO never
+        // reaches this line at all (the exists-check above returns early),
+        // so this only runs once per shortage episode, not once per order.
+        //
+        // ponytail: this call happens inside the REQUIRES_NEW transaction
+        // above, so the DB connection for this transaction stays checked
+        // out for however long LegacySupplyClient's retries take (bounded,
+        // ~10-13s worst case). Under many simultaneous *fresh* shortages at
+        // once this could pressure the connection pool. Upgrade path: move
+        // the row-creation and the send into two separate steps (publish an
+        // internal "order created" signal after the creation commits, send
+        // from a non-transactional handler) if that pressure ever shows up
+        // in practice.
+        sender.trySend(order);
 
         return Optional.of(new ReorderResult(order.getId(), productId, units, order.getStatus()));
     }

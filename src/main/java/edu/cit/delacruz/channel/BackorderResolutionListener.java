@@ -1,7 +1,7 @@
 package edu.cit.delacruz.channel;
 
 import java.util.Comparator;
-import java.util.Optional   ;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -53,7 +53,7 @@ class BackorderResolutionListener {
                 .forEach(this::resolve);
     }
 
-    
+
     private void resolve(Order order) {
         String decision;
         try {

@@ -56,19 +56,27 @@ class InventoryServiceImpl implements InventoryService {
             throw new IllegalArgumentException("Quantity must be greater than zero.");
         }
 
-        InventoryItem item = inventoryRepository
-                .findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("Product not found: " + productId));
-
-        // The rejection rule lives here, inside the Inventory module, not
-        // in the caller — Order only ever sees the outcome via the
-        // interface (a normal return, or InsufficientStockException).
-        if (quantity > item.getStock()) {
-            throw new InsufficientStockException(productId, quantity, item.getStock());
+        // One atomic UPDATE ... WHERE stock >= quantity instead of a
+        // separate read-check-write: that old sequence let two concurrent
+        // reserve() calls for the same product both read the same stock
+        // value, both pass the check, and both write — the second save()
+        // silently overwriting the first (a lost update, which is how
+        // overselling actually happened under real concurrent load). The
+        // rejection rule still lives here, inside Inventory — Order only
+        // ever sees the outcome via the interface (a normal return, or
+        // InsufficientStockException) — but the DB itself now enforces it
+        // atomically, so there's no gap for a second caller to land in.
+        int rowsUpdated = inventoryRepository.decrementStock(productId, quantity);
+        if (rowsUpdated == 0) {
+            InventoryItem current = inventoryRepository.findById(productId).orElse(null);
+            if (current == null) {
+                throw new IllegalArgumentException("Product not found: " + productId);
+            }
+            throw new InsufficientStockException(productId, quantity, current.getStock());
         }
 
-        item.setStock(item.getStock() - quantity);
-        InventoryItem saved = inventoryRepository.save(item);
+        InventoryItem saved = inventoryRepository.findById(productId)
+                .orElseThrow(() -> new IllegalStateException("Product vanished mid-reservation: " + productId));
 
         eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
 
@@ -110,12 +118,17 @@ class InventoryServiceImpl implements InventoryService {
             throw new IllegalArgumentException("Quantity must be greater than zero.");
         }
 
-        InventoryItem item = inventoryRepository
-                .findById(productId)
-                .orElseThrow(() -> new IllegalArgumentException("Product not found: " + productId));
+        // Same reasoning as reserve(): an atomic UPDATE instead of
+        // read-then-write, so two concurrent restocks for the same
+        // product (e.g. a cancellation and a supplier delivery landing at
+        // once) can't lose one of them to a last-write-wins race.
+        int rowsUpdated = inventoryRepository.incrementStock(productId, quantity);
+        if (rowsUpdated == 0) {
+            throw new IllegalArgumentException("Product not found: " + productId);
+        }
 
-        item.setStock(item.getStock() + quantity);
-        InventoryItem saved = inventoryRepository.save(item);
+        InventoryItem saved = inventoryRepository.findById(productId)
+                .orElseThrow(() -> new IllegalStateException("Product vanished mid-restock: " + productId));
 
         eventPublisher.publishEvent(new StockChangedEvent(saved.getProductId(), saved.getStock()));
 

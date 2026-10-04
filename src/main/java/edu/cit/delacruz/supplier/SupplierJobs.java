@@ -12,7 +12,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import edu.cit.delacruz.supplier.SupplierProperties.SkuInfo;
 import edu.cit.delacruz.supplier.event.ReorderDeliveredEvent;
 
 /**
@@ -31,20 +30,20 @@ class SupplierJobs {
 
     private final SupplierOrderRepository repository;
     private final LegacySupplyClient client;
-    private final SupplierProperties properties;
+    private final SupplierOrderSender sender;
     private final ApplicationEventPublisher events;
     private final int batchSize;
 
     SupplierJobs(
             SupplierOrderRepository repository,
             LegacySupplyClient client,
-            SupplierProperties properties,
+            SupplierOrderSender sender,
             ApplicationEventPublisher events,
             @Value("${app.supplier.batch-size:5}") int batchSize
     ) {
         this.repository = repository;
         this.client = client;
-        this.properties = properties;
+        this.sender = sender;
         this.events = events;
         this.batchSize = batchSize;
     }
@@ -56,23 +55,9 @@ class SupplierJobs {
                 SupplierOrderStatus.PENDING, PageRequest.of(0, batchSize, Sort.by("createdAt")));
 
         for (SupplierOrder order : pending) {
-            try {
-                SkuInfo sku = properties.lookup(order.getProductId());
-                LegacyXml.OrderAck ack = client.placeOrder(
-                        sku.sku(), order.getCases(), order.getBuyerRef(), order.getRequestId());
-                order.setPoNumber(ack.poNumber());
-                order.setStatus(mapStatus(ack.statusCode()));
-            } catch (LegacySupplyClient.RateLimitedException e) {
+            if (sender.trySend(order) == SupplierOrderSender.Outcome.RATE_LIMITED) {
                 log.info("LegacySupply quota hit, stopping this tick");
                 break; // leave the rest PENDING; the next tick tries again
-            } catch (LegacySupplyClient.PermanentException e) {
-                log.warn("Reorder {} rejected by LegacySupply: {}", order.getRequestId(), e.getMessage());
-                order.setStatus(SupplierOrderStatus.FAILED);
-            } catch (RuntimeException e) {
-                // Transient (timeout/503/retries exhausted): leave PENDING.
-                // The outbox row is safe and the next tick retries with the
-                // same X-Request-Id/BuyerRef, so LegacySupply can't double-book it.
-                log.warn("Reorder {} not sent, will retry: {}", order.getRequestId(), e.getMessage());
             }
         }
     }
