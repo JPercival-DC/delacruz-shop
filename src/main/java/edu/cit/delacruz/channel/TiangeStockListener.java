@@ -1,13 +1,9 @@
 package edu.cit.delacruz.channel;
 
 import java.util.List;
-import java.util.concurrent.Executor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Bean;
-import org.springframework.scheduling.annotation.Async;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -23,21 +19,20 @@ import edu.cit.delacruz.inventory.service.InventoryService;
  * so a reservation that later rolls back never reports stock it didn't
  * actually take; only products Tiangge actually lists are worth telling.
  * <p>
- * {@code @Async}: this used to call Tiangge synchronously, inline, on
- * whatever thread performed the commit - the web UI's Tomcat thread, or
- * the feed poller's scheduler thread. Under a flash-sale burst or a slow
- * Tiangge response (which the lab explicitly simulates), that queued
- * every later stock change behind however long the earlier ones took to
- * publish, which is how updates ended up arriving late. Moving the actual
- * HTTP call onto its own small pool lets the event fire-and-continue
- * instead of blocking order processing on a Tiangge round trip.
- * <p>
- * Re-reads current stock from InventoryService instead of trusting the
- * value captured on the event: once this runs asynchronously, two calls
- * for the same product can be reordered by the executor, so trusting a
- * stale captured number risks publishing an old value after a newer one.
- * Reading fresh at send time means whichever call actually runs last
- * reports the true current stock, regardless of queueing order.
+ * Dispatch is per-product via {@link PerProductSerialDispatcher}, not a
+ * shared thread pool. A shared pool let two updates for the SAME product
+ * run concurrently with no ordering guarantee between them, so a slower
+ * call carrying an older value could complete (and reach Tiangge) after a
+ * faster call carrying a newer one - Tiangge would then show the stale
+ * number, looking exactly like an accepted order's stock change was
+ * ignored. Per-product dispatch makes that impossible: updates for one
+ * product run strictly in the order they were triggered, one at a time,
+ * never concurrently with each other. Every individual change gets its
+ * own publish - nothing is skipped or merged, since "an accepted order's
+ * stock change was ignored" means exactly that: one specific change's
+ * update never arrived, not just that the final number was eventually
+ * right. Different products still run fully in parallel, so a backlog on
+ * one product never delays another's updates.
  */
 @Component
 class TiangeStockListener {
@@ -47,6 +42,7 @@ class TiangeStockListener {
     private final TiangeClient client;
     private final TiangeProperties properties;
     private final InventoryService inventoryService;
+    private final PerProductSerialDispatcher dispatcher = new PerProductSerialDispatcher();
 
     TiangeStockListener(TiangeClient client, TiangeProperties properties, InventoryService inventoryService) {
         this.client = client;
@@ -54,31 +50,28 @@ class TiangeStockListener {
         this.inventoryService = inventoryService;
     }
 
-    @Bean
-    Executor tiangeStockExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(2);
-        executor.setMaxPoolSize(4);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("tiangge-stock-");
-        executor.initialize();
-        return executor;
-    }
-
-    @Async("tiangeStockExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onStockChanged(StockChangedEvent event) {
-        if (!properties.listedProductIds().contains(event.getProductId())) {
+        String productId = event.getProductId();
+        if (!properties.listedProductIds().contains(productId)) {
             return;
         }
-        InventoryItem current = inventoryService.getItem(event.getProductId());
+        // submit() returns almost immediately (a couple of atomic ops,
+        // maybe an enqueue) - this still doesn't block the committing
+        // thread on a Tiangge round trip, same goal the old @Async had,
+        // but now with per-product ordering guaranteed instead of not.
+        dispatcher.submit(productId, () -> publish(productId));
+    }
+
+    private void publish(String productId) {
+        InventoryItem current = inventoryService.getItem(productId);
         if (current == null) {
-            return; // deleted between the event firing and this running - nothing to report
+            return; // deleted since the triggering change - nothing to report
         }
         try {
-            client.publishStock(List.of(new StockEntry(event.getProductId(), current.getStock())));
+            client.publishStock(List.of(new StockEntry(productId, current.getStock())));
         } catch (RuntimeException e) {
-            log.warn("Tiangge stock update for {} failed: {}", event.getProductId(), e.getMessage());
+            log.warn("Tiangge stock update for {} failed: {}", productId, e.getMessage());
         }
     }
 }

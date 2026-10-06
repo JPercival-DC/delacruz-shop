@@ -23,18 +23,18 @@ import edu.cit.delacruz.supplier.SupplierProperties.SkuInfo;
  * request thread this callback runs on. REQUIRES_NEW forces a genuinely
  * fresh transaction regardless of what else is bound to the thread.
  * <p>
- * The open-order check below runs BEFORE the insert, not by attempting the
- * insert and catching a constraint violation after the fact. Postgres
- * aborts the *whole* transaction on a constraint violation, not just the
- * failed statement, so catching the exception here and returning normally
- * wouldn't help - the commit Spring's proxy attempts right after this
- * method returns would still fail against the already-aborted transaction.
- * The partial unique index in schema.sql remains as a safety net for a
- * genuine concurrent race (two threads reordering the same product at the
- * same instant); in that rare case this method throws rather than
- * degrading gracefully, which just means that one attempt is logged and
- * dropped rather than silently duplicated - an acceptable trade for how
- * unlikely that race is in this app.
+ * The lookup for an existing order below runs BEFORE any insert, not by
+ * attempting the insert and catching a constraint violation after the
+ * fact. Postgres aborts the *whole* transaction on a constraint
+ * violation, not just the failed statement, so catching the exception
+ * here and returning normally wouldn't help - the commit Spring's proxy
+ * attempts right after this method returns would still fail against the
+ * already-aborted transaction. The partial unique index in schema.sql
+ * remains as a safety net for a genuine concurrent race (two threads
+ * reordering the same product at the same instant); in that rare case
+ * this method throws rather than degrading gracefully, which just means
+ * that one attempt is logged and dropped rather than silently duplicated
+ * - an acceptable trade for how unlikely that race is in this app.
  */
 @Service
 class SupplierGatewayImpl implements SupplierGateway {
@@ -62,12 +62,24 @@ class SupplierGatewayImpl implements SupplierGateway {
         if (unitsNeeded <= 0) {
             throw new IllegalArgumentException("unitsNeeded must be positive");
         }
-        if (repository.existsByProductIdAndStatusNotIn(productId, CLOSED_STATUSES)) {
-            // A PENDING/PLACED/.../SHIPPED order already exists for this
-            // product - reserve() firing LowStockEvent again before that
-            // one clears is expected, not an error.
-            log.debug("Reorder already open for {}, skipping", productId);
-            return Optional.empty();
+        Optional<SupplierOrder> existing = repository.findFirstByProductIdAndStatusNotIn(productId, CLOSED_STATUSES);
+        if (existing.isPresent()) {
+            SupplierOrder order = existing.get();
+            if (order.getStatus() != SupplierOrderStatus.PENDING) {
+                // Genuinely open already (LegacySupply has acknowledged
+                // it) - reserve() firing LowStockEvent again before that
+                // clears is expected, not an error.
+                log.debug("Reorder already open for {}, skipping", productId);
+                return Optional.empty();
+            }
+            // Still PENDING: an earlier attempt for this same shortage
+            // never actually reached LegacySupply. Retry sending THIS row
+            // - same X-Request-Id/BuyerRef, never a second row for one
+            // open shortage - instead of treating "a row exists in our
+            // own DB" as "LegacySupply has it," which is what let orders
+            // get reported BACKORDERED before a PO genuinely existed.
+            sender.trySend(order);
+            return Optional.of(new ReorderResult(order.getId(), productId, order.getUnits(), order.getStatus()));
         }
 
         SkuInfo sku = properties.lookup(productId);
@@ -85,9 +97,11 @@ class SupplierGatewayImpl implements SupplierGateway {
         // Tiangge order) gets back an order that's either already PLACED,
         // or still safely PENDING for the scheduled job to retry - never a
         // decision reported as "a PO is open" before LegacySupply has
-        // actually been asked. A product that already has an open PO never
-        // reaches this line at all (the exists-check above returns early),
-        // so this only runs once per shortage episode, not once per order.
+        // actually been asked. A product with an order already genuinely
+        // open never reaches this line at all (handled above); a product
+        // still stuck PENDING retries through the branch above instead of
+        // creating a second row - this fresh-row path only runs once per
+        // shortage episode, not once per order.
         //
         // ponytail: this call happens inside the REQUIRES_NEW transaction
         // above, so the DB connection for this transaction stays checked
